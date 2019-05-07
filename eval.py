@@ -10,7 +10,10 @@ def load_data(data_dir, batch_size, split):
     """ Method returning a data loader for labeled data """
     # TODO (optional): add data transformations if needed
     transform = transforms.Compose([
-        transforms.ToTensor()
+        transforms.Scale(300),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        transforms.Normalize((0.3337, 0.3064, 0.3171), ( 0.2672, 0.2564, 0.2629))
         ]
     )
     data = datasets.ImageFolder(f'{data_dir}/supervised/{split}', transform=transform)
