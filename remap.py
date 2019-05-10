@@ -1,8 +1,10 @@
 from model import Model
 import argparse
 import json
+import os
+from os.path import join
 import torch
-from tqdm import tqdm 
+import pickle as pk
 
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
@@ -20,7 +22,21 @@ def load_data(data_dir, batch_size, split):
         ]
     )
     data = datasets.ImageFolder(f'{data_dir}/supervised/{split}', transform=transform)
+    arrange = os.listdir( f'{data_dir}/supervised/{split}')
+    old_mapping = data.class_to_idx
     print(data.class_to_idx)
+    mapping = torch.zeros((1000, 1000))
+    arrange_back = {}
+    for i in range(1000):
+        arrange_back[arrange[i]] = i
+    print(arrange_back)
+    for i in range(1000):
+        mapping[old_mapping[arrange[i]]][i] = 1.0
+    print(mapping)
+    print(mapping.sum())
+    with open(join(data_dir, 'pkls', 'mapping.pkl'), 'wb') as f:
+        pk.dump(mapping.t(), f)
+
     data_loader = DataLoader(
         data,
         batch_size=batch_size,
@@ -95,9 +111,4 @@ if __name__ == '__main__':
 
     # Load data
     data_loader_val = load_data(args.data_dir, args.batch_size, split='val')
-    # data_loader_test = load_data(args.data_dir, args.batch_size, split='test')
 
-    # Evaluate model
-    with torch.no_grad():
-        evaluate(model, data_loader_val, args.device, 'Validation')
-        # evaluate(model, data_loader_test, args.device, 'Test')

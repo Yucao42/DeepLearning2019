@@ -1,0 +1,20 @@
+/scratch/yc3390/DL_proj/code/DeepLearning2019/attention.py:29: UserWarning: nn.init.xavier_normal is now deprecated in favor of nn.init.xavier_normal_.
+  torch.nn.init.xavier_normal(out)
+/scratch/yc3390/DL_proj/code/DeepLearning2019/attention.py:40: UserWarning: Implicit dimension choice for softmax has been deprecated. Change the call to include dim=X as an argument.
+  attention_score = F.softmax(attention_score).view(x_in.size(0), x_in.size(1), 1)
+/home/yc3390/anaconda3/envs/dl19/lib/python3.7/site-packages/torchvision/transforms/transforms.py:207: UserWarning: The use of the transforms.Scale transform is deprecated, please use transforms.Resize instead.
+  warnings.warn("The use of the transforms.Scale transform is deprecated, " +
+{
+    "batch_size": 64,
+    "cuda": true,
+    "data_dir": "./data",
+    "model_path": "models/resnet/resnet18_baseline_attention_SE_nonpretrained_long/model_best.pth",
+    "no_cuda": false,
+    "seed": 1008
+}
+
+n parameters: 11967324
+
+Evaluating Validation set...
+Validation top 1 accuracy: 0.0010
+Validation top 5 accuracy: 0.0051

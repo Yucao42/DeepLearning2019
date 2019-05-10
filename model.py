@@ -1,8 +1,10 @@
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
 import torch.nn.functional as F
-from attention import SELayer
-
+import torch
+import math
+import pickle as pk
+from Non_local import NONLocalBlock3D
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152']
@@ -22,6 +24,14 @@ def conv3x3(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride,
                      padding=1, bias=False)
 
+def partial_nll(scores, target):
+    '''First 3 answers sums up to 1, use a negative log likelihood loss to correct it further.
+    '''
+    epi = 1e-12
+    probs = scores[:, :3] 
+    #probs = scores[:, :3] / (socres[:, :3].sum(dim=1) + epi)
+    g_t = target[:, :3]
+    return F.nll_loss(probs, g_t) 
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -96,26 +106,39 @@ class Bottleneck(nn.Module):
 
 class ResNet(nn.Module):
 
-    def __init__(self, block, layers, mid_layer=500, num_classes=1000, dp=0.5, lock_bn=False):
+    def __init__(self, block, layers, mid_layer=500, num_classes=1000, dp=0.5, lock_bn=False, sigmoid=False, optimized=True, non_local=True):
         self.inplanes = 64
+        self.non_local = non_local
+        self.optimized = optimized
         self.dp = dp
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3,
                                bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
+        self.mapping = pk.load(open('/scratch/yc3390/DL_proj/data/ssl_data_96/pkls/mapping.pkl', 'rb')).cuda()
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
         self.layer1 = self._make_layer(block, 64, layers[0])
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
         self.avgpool = nn.AvgPool2d(7, stride=1)
-        self.se = SELayer(512 * block.expansion)
         self.fc1 = nn.Linear(512 * block.expansion, mid_layer)
         self.fc2 = nn.Linear(mid_layer, num_classes)
+        self.score = nn.Sigmoid()
+        self.sigmoid = sigmoid
+        if non_local:
+            self.NL = nn.Sequential(
+                NONLocalBlock3D(256 * block.expansion, sub_sample=False))
 
         for m in self.modules():
-            if isinstance(m, nn.Conv2d):
+            if isinstance(m, nn.Conv3d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm3d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Conv2d):
                 nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
             elif isinstance(m, nn.BatchNorm2d):
                 nn.init.constant_(m.weight, 1)
@@ -150,28 +173,39 @@ class ResNet(nn.Module):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
+        if self.non_local:
+            x = self.NL(x.unsqueeze(2))
+            x = x.squeeze(2)
         x = self.layer4(x)
 
         x = self.avgpool(x)
-        # bs, 512, 1, 1
-        x = self.se(x)
         x = x.view(x.size(0), -1)
         x = F.dropout(x, p=self.dp, training=self.training)
         x = self.relu(self.fc1(x))
+        ### Double Dropout
+        x = F.dropout(x, p=self.dp, training=self.training)
         x = self.fc2(x)
 
-        return x
+        #if self.optimized:
+        #    x = self.relu(x)
+        #    x = self.optimized_output.predictions(x) 
+        #elif self.sigmoid:
+        #    x = self.score(x)
+        #    x = self.optimized_output.predictions(x) 
+        #else:
+        #    x = torch.clamp(x, 0, 1)
+        return x.matmul(self.mapping)
 
 def Model():
     return resnet18()
 
-def resnet18(pretrained=False, **kwargs):
+def resnet18(pretrained=False, dp=0.0, **kwargs):
     """Constructs a ResNet-18 model.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
+    model = ResNet(BasicBlock, [2, 2, 2, 2], dp=dp,  **kwargs)
     if pretrained:
         try:
             model.load_state_dict(model_zoo.load_url(model_urls['resnet18']))
@@ -187,7 +221,7 @@ def resnet34(pretrained=False, **kwargs):
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
+    model = ResNet(BasicBlock, [3, 4, 6, 3], dp=0.2, **kwargs)
     if pretrained:
         try:
             model.load_state_dict(model_zoo.load_url(model_urls['resnet34']))
@@ -197,43 +231,40 @@ def resnet34(pretrained=False, **kwargs):
     return model
 
 
-def resnet50(pretrained=False, **kwargs):
+def resnet50(pretrained=False,dp=0.2, **kwargs):
     """Constructs a ResNet-50 model.
 
     Args:
         pretrained (bool): If True, returns a model pre-trained on ImageNet
     """
-    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
+    model = ResNet(Bottleneck, [3, 4, 6, 3],dp=dp, **kwargs)
     state_dict = model.state_dict()
     if pretrained:
-        try:
-            model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
-        except:
-            print('Last dimension size mismatch!')
-        '''
-            pretrained_file = '~/.torch/models/' + model_urls['resnet50'].strip()[-1] 
-            pretrained_file = 'results/9943'
+        if True:
+            #model.load_state_dict(model_zoo.load_url(model_urls['resnet50']))
+            pretrained_file = '/home/yc3390/.torch/models/' + model_urls['resnet50'].split('/')[-1] 
             raw_dict = torch.load(pretrained_file) 
             for k,v in raw_dict.items():
-                #if 'fc' in k:
-                #    continue;
+                if 'fc' in k:
+                    continue;
                 if isinstance(v, torch.nn.parameter.Parameter):
-                    v = v.data
-                    state_dict[k].copy_(v)
-            print("Load sucessfully ! ", pretrained_file)
-        except:
-            print('Last dimension size mismatch!')
-        '''
-        '''
-        pretrained_file = '~/.torch/models/' + model_urls['resnet50'].strip()[-1] 
-        raw_dict = torch.load(pretrained_file) 
-        for k,v in raw_dict.items():
-            if 'fc' in k:
-                continue;
-            if isinstance(v, torch.nn.parameter.Parameter):
-                v = v.data
-                state_dict[k].copy_(v)
-        '''
+                    if k in state_dict.keys():
+                        v = v.data
+                        state_dict[k].copy_(v)
+            print('Loaded pretrained model succesfully!')
+        #except:
+        #    print('Last dimension size mismatch!')
+
+        #    '''
+        #    pretrained_file = '~/.torch/models/' + model_urls['resnet50'].strip()[-1] 
+        #    raw_dict = torch.load(pretrained_file) 
+        #    for k,v in raw_dict.items():
+        #        if 'fc' in k:
+        #            continue;
+        #        if isinstance(v, torch.nn.parameter.Parameter):
+        #            v = v.data
+        #            state_dict[k].copy_(v)
+        #    '''
     return model
 
 
@@ -249,13 +280,6 @@ def resnet101(pretrained=False, **kwargs):
             model.load_state_dict(model_zoo.load_url(model_urls['resnet101']))
         except:
             print('Last dimension size mismatch!')
-            pretrained_file = '~/.torch/models/' + model_urls['resnet101'].strip[-1] 
-            for k,v in raw_dict.items():
-                if 'fc' in k:
-                    continue;
-                if isinstance(v, torch.nn.parameter.Parameter):
-                    v = v.data
-                    state_dict[k].copy_(v)
 
     return model
 
@@ -268,5 +292,9 @@ def resnet152(pretrained=False, **kwargs):
     """
     model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
     if pretrained:
-        model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
+        try:
+            model.load_state_dict(model_zoo.load_url(model_urls['resnet152']))
+        except:
+            print('Last dimension size mismatch!')
+
     return model

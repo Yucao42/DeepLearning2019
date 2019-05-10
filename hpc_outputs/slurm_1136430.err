@@ -1,0 +1,4 @@
++ MODEL=resnet18_baseline_attention_SE_nonpretrained_long
++ mkdir -p models/resnet/resnet18_baseline_attention_SE_nonpretrained_long
++ python3 eval.py --model_path models/resnet/resnet18_baseline_attention_SE_nonpretrained_long/model_best.pth
++ tee models/resnet/resnet18_baseline_attention_SE_nonpretrained_long/resnet18_baseline_attention_SE_nonpretrained_long_test_50_finetune.report

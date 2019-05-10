@@ -1,0 +1,6 @@
++ MODEL=resnet18_baseline_attention_SE_nonpretrained_long
++ MODEL =resnet50_0.5_non_local_lr4e2_long_pretrained
+shell/test.sh: line 5: MODEL: command not found
++ mkdir -p models/resnet/resnet18_baseline_attention_SE_nonpretrained_long
++ tee models/resnet/resnet18_baseline_attention_SE_nonpretrained_long/resnet18_baseline_attention_SE_nonpretrained_long_test_DL_50_finetune.report
++ python3 eval.py --model_path models/resnet/resnet18_baseline_attention_SE_nonpretrained_long/model_best.pth
